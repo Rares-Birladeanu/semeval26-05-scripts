@@ -22,3 +22,38 @@ Scores will be printed and written on output/scores.json. If your predictions fi
 To submit to CodaBench, zip the predictions.jsonl up and upload it to the "My Submissions" tab on the task website.
 
 Test set is yet unreleased, so you can only test on the dev set for now. The samples (including labels) are public here: https://github.com/Janosch-Gehring/ambistory
+
+# TensorFlow MLP Baseline
+
+We provide a simple text MLP baseline implemented with TensorFlow/Keras that trains on `data/train.json` and predicts on `data/dev.json` by default. It concatenates the available text fields and learns a 5‑class classifier (labels 1–5), using the rounded mean of human judgments as the training target.
+
+1) Install requirements (includes CPU‑only TensorFlow):
+
+```
+pip install -r requirements.txt
+```
+
+2) Run the baseline (writes `predictions/tf_mlp_predictions_dev.jsonl`):
+
+```
+python baselines/tf_mlp_baseline.py --train data/train.json --eval data/dev.json --output predictions/tf_mlp_predictions_dev.jsonl
+```
+
+Useful flags:
+- `--epochs` (default 5)
+- `--batch_size` (default 64)
+- `--max_tokens` vocabulary size for TF‑IDF vectorizer (default 10000)
+
+3) Evaluate the produced predictions on the dev set:
+
+```
+python evaluate.py predictions/tf_mlp_predictions_dev.jsonl dev
+```
+
+Or evaluate with the Codabench scoring format:
+
+```
+python scoring.py input/ref/solution.jsonl predictions/tf_mlp_predictions_dev.jsonl output/scores.json
+```
+
+Note: TensorFlow may be a large dependency. If you prefer, run this baseline in a virtual environment.
