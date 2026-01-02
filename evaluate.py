@@ -1,25 +1,33 @@
+"""
+Comprehensive evaluation script for Semeval 2026 Task 5 predictions
+Computes multiple metrics: Spearman, MAE, RMSE, Accuracy, and more
+"""
+
 import sys
 import os
 import json
 import statistics
-from scipy.stats import spearmanr
+from collections import Counter
+from typing import Dict, List
 
-"""
-Usage: python3 evaluate.py filepath set
-filepath: Path to the predictions .jsonl file, e.g. predictions/random_predictions.jsonl 
-set: The split to test on (dev, test, train) - Refers to the files in data/ directory.
-Spearman and Accuracy scores will be printed on command line.
-"""
+import numpy as np
+from scipy.stats import spearmanr, pearsonr
 
 from format_check import check_formatting
 
+
 def get_standard_deviation(l):
-    return statistics.stdev(l)
+    """Calculate standard deviation."""
+    return statistics.stdev(l) if len(l) > 1 else 0.0
+
 
 def get_average(l):
-    return sum(l)/len(l)
+    """Calculate average."""
+    return sum(l) / len(l) if l else 0.0
+
 
 def is_within_standard_deviation(prediction, labels):
+    """Check if prediction is within standard deviation of average."""
     avg = get_average(labels)
     stdev = get_standard_deviation(labels)
 
@@ -31,81 +39,256 @@ def is_within_standard_deviation(prediction, labels):
     if abs(avg - prediction) < 1:
         return True
 
-    # If neither one applies, then this prediction will be counted as "wrong".
     return False
 
-def spearman_evaluation_score(predictions_filepath: str, gold_data: dict):
+
+def load_predictions(predictions_filepath: str) -> Dict[str, int]:
+    """Load predictions from JSONL file."""
+    predictions = {}
+    with open(predictions_filepath, "r", encoding="utf-8") as f:
+        for line in f:
+            data = json.loads(line.strip())
+            predictions[str(data["id"])] = int(data["prediction"])
+    return predictions
+
+
+def compute_comprehensive_metrics(predictions_filepath: str, gold_data: dict):
     """
-    Get the spearman score for a prediction filepath on the gold data.
-    It calculates the correlation between the list of predictions and the list of human averages.
-    Score is printed on command line.
+    Compute comprehensive evaluation metrics.
     """
-    gold_list = ["-"] * len(gold_data)
-    pred_list = ["-"] * len(gold_data)
-
-    with open(predictions_filepath, "r") as f:
-        pred_lines = f.readlines()
-
-    for line in pred_lines:
-        line = json.loads(line)
-        gold_list[int(line["id"])] = get_average(gold_data[str(line["id"])]["choices"])
-        pred_list[int(line["id"])] = line["prediction"]
-
-    corr, value = spearmanr(pred_list, gold_list)
-    print(f"----------\nSpearman Correlation: {corr}\nSpearman p-Value: {value}")
-
-
-
-def accuracy_within_standard_deviation_score(predictions_filepath, gold_data):
-    """
-    Get the Acc. w/in SD score.
-    It calculates the proportion of samples where the prediction is within either 1 or +/- standard deviation 
-    of the average human judgment.
-    Score is printed on command line.
-    """
-    with open(predictions_filepath, "r") as f:
-        pred_lines = f.readlines()
-
-    correct_guesses = 0
-    wrong_guesses = 0
-
-    for line in pred_lines:
-        line = json.loads(line)
-        labels = gold_data[str(line["id"])]["choices"]
-        if is_within_standard_deviation(line["prediction"], labels):
-            correct_guesses += 1
+    predictions = load_predictions(predictions_filepath)
+    
+    # Collect data
+    gold_means = []
+    gold_rounded_means = []
+    pred_values = []
+    gold_choices = []
+    pred_rounded = []
+    
+    # Per-class metrics
+    class_correct = {i: 0 for i in range(1, 6)}
+    class_total = {i: 0 for i in range(1, 6)}
+    within_sd_correct = 0
+    within_sd_total = 0
+    exact_match = 0
+    
+    for sample_id, sample_data in gold_data.items():
+        if sample_id not in predictions:
+            continue
+            
+        if "choices" not in sample_data or not sample_data["choices"]:
+            continue
+        
+        choices = sample_data["choices"]
+        pred = predictions[sample_id]
+        
+        # Calculate gold metrics
+        gold_mean = get_average(choices)
+        gold_rounded = round(gold_mean)
+        gold_rounded = min(5, max(1, gold_rounded))
+        
+        gold_means.append(gold_mean)
+        gold_rounded_means.append(gold_rounded)
+        pred_values.append(pred)
+        gold_choices.append(choices)
+        pred_rounded.append(pred)
+        
+        # Per-class accuracy
+        class_total[gold_rounded] += 1
+        if pred == gold_rounded:
+            class_correct[gold_rounded] += 1
+            exact_match += 1
+        
+        # Within standard deviation
+        within_sd_total += 1
+        if is_within_standard_deviation(pred, choices):
+            within_sd_correct += 1
+    
+    # Convert to numpy arrays
+    gold_means = np.array(gold_means)
+    gold_rounded_means = np.array(gold_rounded_means)
+    pred_values = np.array(pred_values)
+    
+    # ========== CORRELATION METRICS ==========
+    print("\n" + "="*60)
+    print("CORRELATION METRICS")
+    print("="*60)
+    
+    # Spearman correlation (with continuous means)
+    spearman_corr, spearman_p = spearmanr(pred_values, gold_means)
+    print(f"Spearman Correlation (vs continuous means): {spearman_corr:.4f} (p={spearman_p:.6f})")
+    
+    # Spearman correlation (with rounded means)
+    spearman_rounded_corr, spearman_rounded_p = spearmanr(pred_values, gold_rounded_means)
+    print(f"Spearman Correlation (vs rounded means): {spearman_rounded_corr:.4f} (p={spearman_rounded_p:.6f})")
+    
+    # Pearson correlation
+    pearson_corr, pearson_p = pearsonr(pred_values, gold_means)
+    print(f"Pearson Correlation: {pearson_corr:.4f} (p={pearson_p:.6f})")
+    
+    # ========== REGRESSION METRICS ==========
+    print("\n" + "="*60)
+    print("REGRESSION METRICS")
+    print("="*60)
+    
+    # MAE (Mean Absolute Error)
+    mae_continuous = np.mean(np.abs(pred_values - gold_means))
+    mae_rounded = np.mean(np.abs(pred_values - gold_rounded_means))
+    print(f"MAE (vs continuous means): {mae_continuous:.4f}")
+    print(f"MAE (vs rounded means): {mae_rounded:.4f}")
+    
+    # RMSE (Root Mean Squared Error)
+    rmse_continuous = np.sqrt(np.mean((pred_values - gold_means) ** 2))
+    rmse_rounded = np.sqrt(np.mean((pred_values - gold_rounded_means) ** 2))
+    print(f"RMSE (vs continuous means): {rmse_continuous:.4f}")
+    print(f"RMSE (vs rounded means): {rmse_rounded:.4f}")
+    
+    # ========== ACCURACY METRICS ==========
+    print("\n" + "="*60)
+    print("ACCURACY METRICS")
+    print("="*60)
+    
+    # Exact match accuracy
+    n_samples = len(pred_values)
+    exact_accuracy = exact_match / n_samples if n_samples > 0 else 0.0
+    print(f"Exact Match Accuracy: {exact_accuracy:.4f} ({exact_match}/{n_samples})")
+    
+    # Within 1 point accuracy
+    within_one = np.sum(np.abs(pred_values - gold_rounded_means) <= 1)
+    within_one_accuracy = within_one / n_samples if n_samples > 0 else 0.0
+    print(f"Within 1 Point Accuracy: {within_one_accuracy:.4f} ({within_one}/{n_samples})")
+    
+    # Within standard deviation accuracy
+    within_sd_accuracy = within_sd_correct / within_sd_total if within_sd_total > 0 else 0.0
+    print(f"Within Standard Deviation Accuracy: {within_sd_accuracy:.4f} ({within_sd_correct}/{within_sd_total})")
+    
+    # ========== PER-CLASS METRICS ==========
+    print("\n" + "="*60)
+    print("PER-CLASS ACCURACY")
+    print("="*60)
+    for class_label in range(1, 6):
+        if class_total[class_label] > 0:
+            accuracy = class_correct[class_label] / class_total[class_label]
+            print(f"Class {class_label}: {accuracy:.4f} ({class_correct[class_label]}/{class_total[class_label]})")
         else:
-            wrong_guesses += 1
-
-    print(f"----------\nAccuracy: {correct_guesses / (correct_guesses + wrong_guesses)} ({correct_guesses}/{correct_guesses+wrong_guesses})")
-
+            print(f"Class {class_label}: N/A (0 samples)")
+    
+    # ========== DISTRIBUTION ANALYSIS ==========
+    print("\n" + "="*60)
+    print("DISTRIBUTION ANALYSIS")
+    print("="*60)
+    
+    pred_dist = Counter(pred_values)
+    gold_dist = Counter(gold_rounded_means)
+    
+    n_samples = len(pred_values)
+    print("Prediction Distribution:")
+    for i in range(1, 6):
+        count = pred_dist.get(i, 0)
+        pct = 100 * count / n_samples if n_samples > 0 else 0
+        print(f"  Class {i}: {count:4d} ({pct:5.1f}%)")
+    
+    print("\nGold Distribution (rounded means):")
+    for i in range(1, 6):
+        count = gold_dist.get(i, 0)
+        pct = 100 * count / n_samples if n_samples > 0 else 0
+        print(f"  Class {i}: {count:4d} ({pct:5.1f}%)")
+    
+    # ========== ERROR ANALYSIS ==========
+    print("\n" + "="*60)
+    print("ERROR ANALYSIS")
+    print("="*60)
+    
+    errors = pred_values - gold_rounded_means
+    print(f"Mean Error: {np.mean(errors):.4f}")
+    print(f"Median Error: {np.median(errors):.4f}")
+    print(f"Std Dev of Errors: {np.std(errors):.4f}")
+    
+    # Error distribution
+    n_errors = len(errors)
+    error_dist = Counter(errors.astype(int))
+    print("\nError Distribution (prediction - gold):")
+    for err in sorted(error_dist.keys()):
+        count = error_dist[err]
+        pct = 100 * count / n_errors if n_errors > 0 else 0
+        print(f"  {err:+3d}: {count:4d} ({pct:5.1f}%)")
+    
+    # ========== SUMMARY ==========
+    print("\n" + "="*60)
+    print("SUMMARY")
+    print("="*60)
+    print(f"Total Samples: {len(pred_values)}")
+    print(f"Best Metric - Spearman: {spearman_corr:.4f}")
+    print(f"Best Metric - MAE: {mae_rounded:.4f}")
+    print(f"Best Metric - Exact Accuracy: {exact_accuracy:.4f}")
+    
+    # Return metrics dictionary
+    return {
+        "spearman_continuous": float(spearman_corr),
+        "spearman_rounded": float(spearman_rounded_corr),
+        "pearson": float(pearson_corr),
+        "mae_continuous": float(mae_continuous),
+        "mae_rounded": float(mae_rounded),
+        "rmse_continuous": float(rmse_continuous),
+        "rmse_rounded": float(rmse_rounded),
+        "exact_accuracy": float(exact_accuracy),
+        "within_one_accuracy": float(within_one_accuracy),
+        "within_sd_accuracy": float(within_sd_accuracy),
+        "total_samples": len(pred_values),
+    }
 
 
 if __name__ == "__main__":
     arguments = sys.argv
     if len(arguments) < 3:
-        print("Please provide the path to the jsonl predictions file and the set to evaluate on (dev/test). \n" 
-        "Example Usage: python3 evaluate.py predictions/random_predictions.jsonl dev")
-        sys.exit()
+        print("Usage: python evaluate.py <predictions_filepath> <set>")
+        print("  predictions_filepath: Path to predictions .jsonl file")
+        print("  set: The split to evaluate on (dev/test/train)")
+        print("\nExample: python evaluate.py predictions/my_predictions.jsonl dev")
+        sys.exit(1)
 
     predictions_filepath = arguments[1]
     if not os.path.exists(predictions_filepath):
-        print("Not a valid predictions filepath, file not found: ", predictions_filepath)
-        sys.exit()
+        print(f"Error: Predictions file not found: {predictions_filepath}")
+        sys.exit(1)
 
     testset = arguments[2]
+    gold_filepath = f"data/{testset}.json"
+    if not os.path.exists(gold_filepath):
+        print(f"Error: Gold data file not found: {gold_filepath}")
+        print("Make sure the set name (dev/test/train) is correct")
+        sys.exit(1)
+
     try:
-        with open("data/" + testset + ".json", "r") as f:
+        with open(gold_filepath, "r", encoding="utf-8") as f:
             gold_data = json.load(f)
-    except:
-        print("No file data/" + testset + ".json found. Make sure the name of the set (train/dev/test) is specified in command line argument #2")
-        sys.exit()
+    except Exception as e:
+        print(f"Error loading gold data: {e}")
+        sys.exit(1)
 
-    if not check_formatting(predictions_filepath, gold_data):
-        sys.exit()
+    print(f"Evaluating: {predictions_filepath}")
+    print(f"Gold data: {gold_filepath}")
+    print(f"Gold samples: {len(gold_data)}")
 
-    print(f"Everything looks OK. Evaluating file {predictions_filepath} on data/{testset}.json...")
+    # check_formatting expects a list of dicts with "id" key
+    # Convert dict format ({"0": {...}, "1": {...}}) to list format ([{"id": "0", ...}, {"id": "1", ...}])
+    if isinstance(gold_data, dict):
+        gold_data_list = [{"id": str(k)} for k in gold_data.keys()]
+    else:
+        gold_data_list = gold_data
+    
+    if not check_formatting(predictions_filepath, gold_data_list):
+        sys.exit(1)
 
-    spearman_evaluation_score(predictions_filepath, gold_data)
-    accuracy_within_standard_deviation_score(predictions_filepath, gold_data)
-
+    print("\n" + "="*60)
+    print("COMPREHENSIVE EVALUATION")
+    print("="*60)
+    
+    metrics = compute_comprehensive_metrics(predictions_filepath, gold_data)
+    
+    # Optionally save metrics to file
+    if len(arguments) >= 4:
+        output_file = arguments[3]
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(metrics, f, indent=2)
+        print(f"\nMetrics saved to: {output_file}")
