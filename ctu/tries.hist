@@ -208,3 +208,26 @@ Train Metrics:
   Spearman: 0.8413 (p=0.0000)
   Accuracy: 0.7123
 
+# augmented again with --per_sample=2, from now on
+>>> python ultimate_solution.py --model_name roberta-base --max_length 120 --epochs 15 --batch_size 64 --augmented_v2 --warmup_ratio 0.5 --dropout 0.4
+============================================================
+EVALUATING DEV DATA
+============================================================
+Dev Metrics:
+  MSE: 1.6361
+  MAE: 0.9286
+  RMSE: 1.2791
+  Spearman: 0.5489 (p=0.0000)
+  Accuracy: 0.3537
+  Accuracy within SD: 0.6548
+
+============================================================
+EVALUATING TRAINING DATA
+============================================================
+Train Metrics:
+  MSE: 0.8020
+  MAE: 0.5153
+  RMSE: 0.8955
+  Spearman: 0.7527 (p=0.0000)
+  Accuracy: 0.5878
+  Accuracy within SD: 0.8247

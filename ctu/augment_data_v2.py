@@ -378,6 +378,10 @@ def main():
     parser.add_argument("--factor", type=float, default=1.0, help="Augmentation factor (1.0 = all samples)")
     parser.add_argument("--strategies", nargs="+", type=int, default=[1, 2, 3, 4, 5],
                        help="Strategies to use: 1=cross-homonym, 2=context-var, 3=synthetic-dev, 4=rating-preserve, 5=context-swap")
+    parser.add_argument("--per_sample", type=int, default=None,
+                       help="Number of augmented samples per original sample (multiplies all strategies). If not set, uses default samples_per_strategy.")
+    parser.add_argument("--per_strategy", nargs="+", type=int, default=None,
+                       help="Samples per strategy in order [1,2,3,4,5]. Example: --per_strategy 2 1 3 1 1")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     args = parser.parse_args()
     
@@ -395,11 +399,33 @@ def main():
     # Initialize augmenter
     augmenter = ImprovedDataAugmenter(train_data, dev_data)
     
+    # Determine samples_per_strategy
+    samples_per_strategy = None
+    if args.per_strategy:
+        # User specified per-strategy counts
+        if len(args.per_strategy) != len(args.strategies):
+            print(f"Warning: --per_strategy has {len(args.per_strategy)} values but {len(args.strategies)} strategies.")
+            print("Using first N values or padding with 1.")
+        samples_per_strategy = {}
+        for i, strategy in enumerate(args.strategies):
+            if i < len(args.per_strategy):
+                samples_per_strategy[strategy] = args.per_strategy[i]
+            else:
+                samples_per_strategy[strategy] = 1
+    elif args.per_sample:
+        # User wants N samples per strategy per original sample
+        samples_per_strategy = {}
+        for strategy in args.strategies:
+            samples_per_strategy[strategy] = args.per_sample
+        print(f"Creating {args.per_sample} augmented samples per strategy per original sample")
+        print(f"Total: {len(args.strategies) * args.per_sample} augmented samples per original (with {len(args.strategies)} strategies)")
+    
     # Augment
     print(f"\nAugmenting with factor {args.factor}...")
     augmented_data = augmenter.augment_dataset(
         augmentation_factor=args.factor,
-        use_strategies=args.strategies
+        use_strategies=args.strategies,
+        samples_per_strategy=samples_per_strategy
     )
     
     # Save
