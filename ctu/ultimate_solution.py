@@ -287,24 +287,31 @@ def data_collator(features):
     
     for key in keys:
         if key == "labels":
-            batch[key] = torch.tensor([f[key] for f in features], dtype=torch.float32)
+            label_list = [f[key] for f in features]
+            if isinstance(label_list[0], torch.Tensor):
+                batch[key] = torch.stack([l.detach().clone() for l in label_list]).float()
+            else:
+                batch[key] = torch.tensor(label_list, dtype=torch.float32)
         else:
-            batch[key] = torch.stack([torch.tensor(f[key]) for f in features])
+            tensors = [f[key] for f in features]
+            if isinstance(tensors[0], torch.Tensor):
+                batch[key] = torch.stack([t.detach().clone() for t in tensors])
+            else:
+                batch[key] = torch.stack([torch.tensor(t) for t in tensors])
     
     return batch
 
 
 def main():
-    # TODO: it seems like the augmented data is not helping very much, let's try another approach tomorrow. I. need. to. sleep.
-
     parser = argparse.ArgumentParser(description="Ultimate Solution for Semeval 2026 Task 5")
-    # parser.add_argument("--train", default=os.path.join(DATA_ROOT, "train_augmented.json"), help="Path to train.json")
     parser.add_argument("--train", default=os.path.join(DATA_ROOT, "train.json"), help="Path to train.json")
+    parser.add_argument("--augmented", action="store_true", help="Use augmented training data")
+    parser.add_argument("--augmented_v2", action="store_true", help="Use augmented training data v2")
     parser.add_argument("--eval", default=os.path.join(DATA_ROOT, "dev.json"), help="Path to evaluation split")
     parser.add_argument("--output", default=os.path.join(PREDICTIONS_ROOT, "ultimate_predictions_dev.jsonl"), help="Output predictions path for eval data")
     parser.add_argument("--train_output", default=os.path.join(PREDICTIONS_ROOT, "ultimate_predictions_train.jsonl"), help="Output predictions path for train data")
     parser.add_argument("--model_name", default="roberta-base", help="Model name (roberta-base or microsoft/deberta-v3-base)")
-    parser.add_argument("--max_length", type=int, default=100, help="Maximum sequence length")
+    parser.add_argument("--max_length", type=int, default=512, help="Maximum sequence length")
     parser.add_argument("--epochs", type=int, default=8, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=80, help="Batch size")
     parser.add_argument("--learning_rate", type=float, default=2e-5, help="Learning rate")
@@ -315,7 +322,13 @@ def main():
     parser.add_argument("--dropout", type=float, default=0.3, help="Dropout rate")
     parser.add_argument("--clean_format", action="store_true", default=True, help="Use natural text format without brackets (default: True)")
     parser.add_argument("--structured_format", action="store_true", help="Use structured format with brackets (overrides clean_format)")
+    parser.add_argument("--compute_lengths", action="store_true", help="Compute lengths of input ids")
     args = parser.parse_args()
+
+    if args.augmented:
+        args.train = args.train.replace(".json", "_augmented.json")
+    elif args.augmented_v2:
+        args.train = args.train.replace(".json", "_augmented_v2.json")
     
     # Determine format
     use_clean_format = not args.structured_format if args.structured_format else args.clean_format
@@ -398,37 +411,43 @@ def main():
     train_dataset = train_dataset.map(tokenize_function, batched=True)
     eval_dataset = eval_dataset.map(tokenize_function, batched=True)
 
-    # def compute_meaningful_id_lengths(dataset: Dataset) -> float:
-    #     """Compute average meaningful ids."""
-    #     meaningful_lengths = []
-    #     for item in dataset:
-    #         input_ids = item['input_ids'].copy()
-    #         while input_ids[-1] == 1:
-    #             input_ids.pop()
-    #         meaningful_lengths.append(len(input_ids))
-    #     return sorted(meaningful_lengths)
+    def compute_meaningful_id_lengths(dataset: Dataset) -> float:
+        """Compute average meaningful ids."""
+        meaningful_lengths = []
+        for item in dataset:
+            input_ids = item['input_ids'].copy()
+            while input_ids[-1] == 1:
+                input_ids.pop()
+            meaningful_lengths.append(len(input_ids))
+        return sorted(meaningful_lengths)
 
-    # training_meaningful_id_lengths = compute_meaningful_id_lengths(train_dataset)
-    # eval_meaningful_id_lengths = compute_meaningful_id_lengths(eval_dataset)
+    if args.compute_lengths:
+        training_meaningful_id_lengths = compute_meaningful_id_lengths(train_dataset)
+        eval_meaningful_id_lengths = compute_meaningful_id_lengths(eval_dataset)
 
-    # training_meaningful_id_lengths_mean = mean(training_meaningful_id_lengths)
-    # eval_meaningful_id_lengths_mean = mean(eval_meaningful_id_lengths)
+        training_meaningful_id_lengths_mean = mean(training_meaningful_id_lengths)
+        eval_meaningful_id_lengths_mean = mean(eval_meaningful_id_lengths)
 
-    # median_training_meaningful_id_length = np.median(training_meaningful_id_lengths)
-    # median_eval_meaningful_id_length = np.median(eval_meaningful_id_lengths)
+        median_training_meaningful_id_length = np.median(training_meaningful_id_lengths)
+        median_eval_meaningful_id_length = np.median(eval_meaningful_id_lengths)
 
-    # third_quartile_training_meaningful_id_length = np.percentile(training_meaningful_id_lengths, 75)
-    # third_quartile_eval_meaningful_id_length = np.percentile(eval_meaningful_id_lengths, 75)
+        third_quartile_training_meaningful_id_length = np.percentile(training_meaningful_id_lengths, 75)
+        third_quartile_eval_meaningful_id_length = np.percentile(eval_meaningful_id_lengths, 75)
 
-    # print(f"Training meaningful id lengths: {training_meaningful_id_lengths}")
-    # print(f"Eval meaningful id lengths: {eval_meaningful_id_lengths}")
-    # print(f"Training meaningful id lengths mean: {training_meaningful_id_lengths_mean}")
-    # print(f"Eval meaningful id lengths mean: {eval_meaningful_id_lengths_mean}")
-    # print(f"Median training meaningful id length: {median_training_meaningful_id_length}")
-    # print(f"Median eval meaningful id length: {median_eval_meaningful_id_length}")
-    # print(f"Third quartile training meaningful id length: {third_quartile_training_meaningful_id_length}")
-    # print(f"Third quartile eval meaningful id length: {third_quartile_eval_meaningful_id_length}")
-    # return
+        max_training_meaningful_id_length = max(training_meaningful_id_lengths)
+        max_eval_meaningful_id_length = max(eval_meaningful_id_lengths)
+
+        print(f"Training meaningful id lengths: {training_meaningful_id_lengths}")
+        print(f"Eval meaningful id lengths: {eval_meaningful_id_lengths}")
+        print(f"Training meaningful id lengths mean: {training_meaningful_id_lengths_mean}")
+        print(f"Eval meaningful id lengths mean: {eval_meaningful_id_lengths_mean}")
+        print(f"Median training meaningful id length: {median_training_meaningful_id_length}")
+        print(f"Median eval meaningful id length: {median_eval_meaningful_id_length}")
+        print(f"Third quartile training meaningful id length: {third_quartile_training_meaningful_id_length}")
+        print(f"Third quartile eval meaningful id length: {third_quartile_eval_meaningful_id_length}")
+        print(f"Max training meaningful id length: {max_training_meaningful_id_length}")
+        print(f"Max eval meaningful id length: {max_eval_meaningful_id_length}")
+        return
 
     train_dataset.set_format("torch", columns=["input_ids", "attention_mask", "labels"])
     eval_dataset.set_format("torch", columns=["input_ids", "attention_mask", "labels"])
