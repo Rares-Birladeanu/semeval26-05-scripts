@@ -76,6 +76,10 @@ class RoBERTaOrdinalModel(nn.Module):
 
 plot_data = collections.defaultdict(list)
 
+# Global variable to store eval data for accuracy within SD calculation
+_eval_data_with_choices = None
+_eval_ids_list = None
+
 def register_plot_point(plot_name: str, y: float):
     """Register a data point for plotting."""
     plot_data[plot_name].append(y)
@@ -137,6 +141,10 @@ class MetricsCallback(TrainerCallback):
             val = safe_float(logs['eval_accuracy'])
             if val is not None:
                 register_plot_point('Validation Accuracy', val)
+        if 'eval_accuracy_within_sd' in logs:
+            val = safe_float(logs['eval_accuracy_within_sd'])
+            if val is not None:
+                register_plot_point('Validation Accuracy within SD', val)
 
 def create_all_plots():
     """Plot all registered data in separate windows and save them separately."""
@@ -250,6 +258,7 @@ def prepare_dataset(split_data: Dict[str, dict], clean_format: bool = True):
 
 def compute_metrics(eval_pred):
     """Compute evaluation metrics."""
+    import statistics
     predictions, labels = eval_pred
     
     # Convert ordinal logits to class predictions
@@ -271,13 +280,35 @@ def compute_metrics(eval_pred):
     spearman, _ = spearmanr(labels, pred_classes)
     accuracy = accuracy_score(labels, pred_classes)
     
-    return {
+    result = {
         "mse": float(mse),
         "mae": float(mae),
         "rmse": float(rmse),
         "spearman": float(spearman) if not np.isnan(spearman) else 0.0,
         "accuracy": float(accuracy) if not np.isnan(accuracy) else 0.0,
     }
+    
+    # Calculate accuracy within standard deviation if eval data is available
+    if _eval_data_with_choices is not None and _eval_ids_list is not None:
+        within_sd_correct = 0
+        within_sd_total = 0
+        
+        for i, (pred_class, sample_id) in enumerate(zip(pred_classes, _eval_ids_list)):
+            if sample_id in _eval_data_with_choices:
+                choices = _eval_data_with_choices[sample_id].get('choices', [])
+                if choices and len(choices) > 0:
+                    within_sd_total += 1
+                    avg = statistics.mean(choices)
+                    stdev = statistics.stdev(choices) if len(choices) > 1 else 0.0
+                    
+                    # Check if within standard deviation or within 1 point
+                    if (avg - stdev) < pred_class < (avg + stdev) or abs(avg - pred_class) < 1:
+                        within_sd_correct += 1
+        
+        if within_sd_total > 0:
+            result["accuracy_within_sd"] = float(within_sd_correct / within_sd_total)
+    
+    return result
 
 
 def data_collator(features):
@@ -348,6 +379,11 @@ def main():
 
     train_ids, train_texts, train_targets = prepare_dataset(train_data, clean_format=use_clean_format)
     eval_ids, eval_texts, eval_targets = prepare_dataset(eval_data, clean_format=use_clean_format)
+    
+    # Store eval data globally for accuracy within SD calculation
+    global _eval_data_with_choices, _eval_ids_list
+    _eval_data_with_choices = eval_data
+    _eval_ids_list = eval_ids
     
     if use_clean_format:
         print("Using clean natural text format (no brackets/colons)")

@@ -1,0 +1,1 @@
+python inference.py --checkpoint ..\predictions\ultimate_checkpoints\checkpoint-1332 --model_name sentence-transformers/all-mpnet-base-v2

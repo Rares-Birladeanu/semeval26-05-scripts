@@ -231,3 +231,27 @@ Train Metrics:
   Spearman: 0.7527 (p=0.0000)
   Accuracy: 0.5878
   Accuracy within SD: 0.8247
+
+# going back to old augmentation_v2
+>>> python ultimate_solution.py --model_name sentence-transformers/all-mpnet-base-v2 --max_length 120 --epochs 20 --batch_size 48 --dropout 0.5 --augmented_v2
+============================================================
+EVALUATING DEV DATA
+============================================================
+Dev Metrics:
+  MSE: 1.1701
+  MAE: 0.7789
+  RMSE: 1.0817
+  Spearman: 0.6054 (p=0.0000)
+  Accuracy: 0.3878
+  Accuracy within SD: 0.7330
+
+============================================================
+EVALUATING TRAINING DATA
+============================================================
+Train Metrics:
+  MSE: 0.7553
+  MAE: 0.5465
+  RMSE: 0.8691
+  Spearman: 0.7314 (p=0.0000)
+  Accuracy: 0.5420
+  Accuracy within SD: 0.8112
